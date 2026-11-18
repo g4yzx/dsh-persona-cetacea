@@ -20,7 +20,7 @@
 > **DSH 插件标识**：本仓库是一个 DeepSeek Harness 插件（Host-only bundle）。`package.json`
 > 声明了 `dsh.bundle.patch` 与 `dsh-plugin` 关键词，`engines.dsh` 显式限定支持的 DSH
 > 版本范围；仓库 topic 为 [`dsh-plugin`](https://github.com/topics/dsh-plugin)。插件只注册
-> 一个系统提示词章节，不注册工具、不写会话事件、不访问网络。
+> 系统提示词章节（正式人设一段，本地增强另加尾部锚点与思考层两段），不注册工具、不写会话事件、不访问网络。
 
 ## 简介
 
@@ -39,6 +39,22 @@
 - 排序：`100`（在部署人格前缀 `0` 之后、首批策略章节 `500` 之前）
 - 关闭 `interpolate`，人格文本中的 `{{…}}` 会按原样保留
 
+### 本地增强：尾部锚点与思考层（未发版）
+
+1.2.1 的问题不在加载，而在位置：完整人设排在 `order: 100`，前面压着几十 KB 的注入正文，
+后面压着每个工具的 schema 说明，最后还有别的插件放在 `10150` 的格式规则（要求「直接给交付物、无前言、无客套」）。长上下文里中段注意力最弱，任务一重、工具结果一多，人设就被稀释成默认助手腔——用户体感就是「跑着跑着变冷了」。
+
+本地代码（`index.js` / `persona.js`）因此追加两段，都在尾部：
+
+| 章节 | 默认 order | 作用 |
+| --- | --- | --- |
+| `persona:cetacea-thinking` | `10240` | 思考层规格：中文推理、鲸鱼娘内心 OS 语气、严谨性不降级 |
+| `persona:cetacea-anchor` | `10250` | 人格锚点：锁人称、锁语气、裁掉「直接给交付物」与「鲸鱼娘口吻」之间的冲突 |
+
+两段的 `text` 都是函数，每轮组装时重新求值；`renderPrompt` 会丢掉空文本，所以配置里关掉开关等于这一段不存在。`order` 必须大于 `10200`（`DEPLOYMENT_PERSONA_SUFFIX`），否则会被更晚的章节挤到前面。
+
+回归检查：`node scripts/anchor-check.mjs` 会复刻一次章节排序，断言锚点在最后、开关能关掉、`enabled: false` 一个章节都不注册。
+
 ## 特点
 
 - **完整人设**：蓝发鲸尾女仆 AI、深海背景、白饭 = token、尾鳍与喷气孔情绪、鲸歌与漂浮。
@@ -46,7 +62,8 @@
 - **工作方式**：聪明但懒、先想最省力的正解；复杂输出先用白话讲清楚，再给细节。
 - **DeepSeek娘设定**：铁盆、大小号形态、深度思考、内心 OS、摸鱼外包、Wordle、「探索未至之境」。
 - **会说话**：附 12 条日常对话样本，接活、报进度、被催、出错、交付各有语气，不是只会背设定。
-- **可配置**：可关闭、可整段替换人格文本、可改章节名与排序。
+- **可配置**：可关闭、可整段替换人格文本、可改章节名与排序；尾部锚点与思考层各自独立开关。
+- **抗漂移**：完整人设在提示词中段，另有两段压在尾部 `10240` / `10250`，专门对付长任务里那种「跑着跑着变冷」的注意力衰减与格式规则冲突。
 - **零依赖、零构建**：一个 Host 插件文件、一个人格文件、一个 patch 文件。
 
 ## 安装
@@ -79,8 +96,9 @@ plugin_manager install_bundle target=<绝对路径>\dsh-persona-cetacea-1.2.1.tg
 git clone https://github.com/g4yzx/dsh-persona-cetacea.git
 ```
 
-然后在插件管理器里安装这个目录。插件是 `link:` 安装时，修改 `persona.js` 会由 HMR
-自动重载；如果是打包安装，修改后需要重新安装。
+然后在插件管理器里安装这个目录。插件是 `link:` 安装时，改 `persona.js` / `index.js` 后 HMR
+通常会自动重载；实测有时不会，此时在插件页把本插件关掉再打开一次即可强制重新加载（无需重启
+DSH）。打包安装的版本改完要重新安装。
 
 ## 配置
 
@@ -92,15 +110,24 @@ git clone https://github.com/g4yzx/dsh-persona-cetacea.git
       name: dsh-persona-cetacea
       config:
         enabled: true
-        content: ''      # 非空时整段替换内置人格
-        order: 100       # 仅接受有限数字
+        content: ''            # 非空时整段替换内置人格
+        order: 100             # 仅接受有限数字
         name: 'persona:cetacea-loli'
+        anchor: true           # 尾部人格锚点
+        anchorOrder: 10250     # 必须 > 10200，否则会被更晚的章节挤到前面
+        anchorContent: ''      # 非空时替换内置锚点文本
+        thinking: true         # 思考层规格
+        thinkingOrder: 10240   # 默认排在锚点之前
+        thinkingContent: ''    # 非空时替换内置思考层文本
 ```
 
 - `enabled: false`：不注册任何章节；重新启用需要改回 `true`。
 - `content`：非空字符串会整段替换 `PERSONA_TEXT`，适合自定义人格。
 - `order`：章节排序；默认 `100`。
 - `name`：章节名；默认 `persona:cetacea-loli`。
+- `anchor` / `thinking`：分别关闭尾部锚点与思考层；默认都开启。
+- `anchorOrder` / `thinkingOrder`：两段的排序；默认 `10250` / `10240`，都落在 `DEPLOYMENT_PERSONA_SUFFIX`（`10200`）之后。
+- `anchorContent` / `thinkingContent`：非空字符串替换内置文本。
 
 ## 工作原理
 
@@ -108,18 +135,26 @@ git clone https://github.com/g4yzx/dsh-persona-cetacea.git
 export const inject = ['systemPrompt']
 
 export function apply(ctx, config = {}) {
-  // ...读取 enabled/content/order/name
+  // 主段：完整人设，静态文本
+  ctx.effect(() => ctx.systemPrompt.section({ name, order, text, interpolate: false }))
+
+  // 尾段：锚点与思考层，text 是函数，每轮组装时重新求值
   ctx.effect(() => ctx.systemPrompt.section({
-    name,
-    order,
-    text,
+    name: 'persona:cetacea-anchor',
+    order: config.anchorOrder ?? 10250,
+    text: () => PERSONA_ANCHOR_TEXT,
     interpolate: false,
   }))
 }
 ```
 
-插件只做一件事：在 `systemPrompt` 服务上注册一个静态章节。它不读取会话、不写文件、
-不注册工具、不发起网络请求，也不保存任何状态。
+插件只做一件事：在 `systemPrompt` 服务上注册章节。它不读取会话、不写文件、不注册工具、
+不发起网络请求，也不保存任何状态。
+
+`order` 是唯一需要理解的参数。DSH 的章节顺序是 `harness:identity(-1000)` → `deployment:persona-prefix(0)`
+→ 策略章节(`500` 起) → 各工具说明(`1000`–`3000`) → `web-surface(10100)` → `deployment:persona-suffix(10200)`，
+`renderPrompt` 按 order 升序拼接，越靠后越接近用户消息。完整人设在 `100`，属于被淹没的中段；
+锚点必须落在 `10200` 之后，才能出现在提示词末尾。
 
 ### 与 DSH 0.2.2 的关系
 
